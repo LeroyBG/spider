@@ -1,11 +1,22 @@
 # Basically just need to create a mapping between routes and functions,
 # then create quality-of-life improvements
 # for now only deal with hard routes without parameters, and the root path
-from typing import TypedDict, overload
+from typing import overload, Literal
 from io import BufferedIOBase
 import json
 from http.server import BaseHTTPRequestHandler
+import socket
 
+type parseMethod = Literal["json", "urlencoded"] | None
+type HTTPMethod = Literal["GET", 
+                           "POST", 
+                           "PUT", 
+                           "HEAD", 
+                           "DELETE", 
+                           "CONNECT", 
+                           "OPTIONS", 
+                           "TRACE", 
+                           "PATCH"]
 # program runs, user creates all their routes, then we handle http requests
 
 class NoContentTypeBytes(Exception):
@@ -14,17 +25,52 @@ class NoContentTypeBytes(Exception):
 class Request(BaseHTTPRequestHandler):
     # From Express
     body: dict | None
+    cookies: dict
     hostName: str
     ip: str
     method: str
     params: dict
     protocol: str
+    query: dict # Might be for later implementation
     res: Response
     secure: bool
-    signed_cookies: dict | str # Not sure about this one
+    signed_cookies: dict # Not sure about this one
     subdomains: list[str]
     xhr: bool
 
+    def __init__(self, request, client_address, server, isParsing: parseMethod, method: HTTPMethod):
+        super().__init__(request=request, client_address=client_address, server=server)
+        self.cookies = self.__get_cookies__()
+        self.hostName = socket.gethostbyaddr(self.client_address[0])
+        self.ip = self.client_address[0]
+        self.method = method
+        self.params = self.__parse_params__()
+
+        # "HTTP/1.0" -> "http", "HTTPS/1.0"-> "https"
+        self.protocol = self.protocol_version[:self.protocol_version.find('/')].lower()
+        self.secure = self.protocol == 'https'
+
+        self.query = self.__parse_query__()
+
+        # self.res should be set by function controlling handoff
+
+        self.signed_cookies = self.__get_signed_cookies__()
+        
+        self.subdomains
+        self.xhr = self.headers["X-Requested-Wit"] == "XMLHttpRequest"
+        # Parse body...
+    
+    def __parse_params__(self):
+        pass
+
+    def __parse_query__(self):
+        pass
+
+    def __get_cookies__(self):
+        pass
+    
+    def __get_signed_cookies__(self):
+        pass
     # Checks if the specified content types are acceptable, based on the request’s
     # Accept HTTP header field. The method returns the best match, or if none of
     # the specified content types is acceptable, returns false (in which case,
@@ -79,7 +125,7 @@ class Response(BaseHTTPRequestHandler):
     content_encoding : str | None
     def __init__(self, request, client_address, server):
         super().__init__(request=request, client_address=client_address, server=server)
-        self.headers = {}
+        self.headers = {} # Will re-write existing "headers" instance variable
         self.code = None
         self.content_type = None
         self.content_encoding = None
@@ -240,7 +286,7 @@ type callback = callable[[Request, Response], None]
 type route_mapping = dict[str, callback] 
 
 # A mapping of types of routes (i.e., GET, POST, etc.) to route_mappings
-type route_type_mapping = dict[str, route_mapping]
+type route_type_mapping = dict[HTTPMethod, route_mapping]
 
 class Router():
     mappings: route_type_mapping
