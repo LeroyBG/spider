@@ -312,7 +312,7 @@ class Response(BaseHTTPRequestHandler):
 type callback = callable[[Request, Response], None]
 
 # A mapping of routes to functions
-type route_mapping = dict[re.Pattern[str], callback] 
+type route_mapping = dict[str, callback] 
 
 # A mapping of types of routes (i.e., GET, POST, etc.) to route_mappings
 type route_type_mapping = dict[HTTPMethod, route_mapping]
@@ -335,19 +335,25 @@ class Router(BaseHTTPRequestHandler):
         }
     
     def __add_route__(self, method: str, route: str, callback: callback):
-        p = re.compile(self.__convert_param_route_to_dummy_regex__(route))
-        self.mappings[method][p] = callback # I guess patterns are hashable?
+        self.mappings[method][route] = callback # I guess patterns are hashable?
     
     def __handle_incoming_request__(self, request_type: HTTPMethod, 
                                     request: str) -> None:
         # Analyze the request path and ignore query component
         path: str = parse.urlparse(request).path
-        for pattern in self.mappings[request_type]:
-            if pattern.match(path):
+        for defined_route_path in self.mappings[request_type]:
+            # TODO: Pre-compile regex and use named capture groups so we don't
+            # have to keep the original defined route path
+
+            match_params = self.__parse_params__(path, defined_route_path)
+            if match_params == None:
+                continue
+
+            else:
                 req = Request(self)
-                self.__parse_params__(request)
+                req.params = match_params
                 res = Response(self)
-                self.mappings[request_type][pattern](req, res)
+                self.mappings[request_type][defined_route_path](req, res)
                 return
     
     def do_GET(self):
@@ -410,7 +416,7 @@ class Router(BaseHTTPRequestHandler):
     # Valid characters for variable values are [^/-.]
     # Note: when using routes with params, we apply very similar regex to the
     # same path twice - maybe fix this one day
-    def __convert_param_route_to_dummy_regex__(defined_route_path: str):
+    def __convert_param_route_to_dummy_regex__(defined_route_path: str) -> str:
         # The only character we handle in a special way is '*', e.g. '/foo/*',
         # which corresponds to the regex '/foo/.*'
         valid_name_chars = re.compile("[A-Za-z0-9_]")
@@ -443,18 +449,16 @@ class Router(BaseHTTPRequestHandler):
                     regex_str += c
         return f'^{regex_str}$'
 
+    # Both matches paths and parses params
+    # Returns none if path doesn't match
     # This one is a lot of heavy lifting:
     # A url can contain parameters, like "/users/:userId/books/:bookId" (2 params)
     # Do some regex with captures?? idk
-    def __parse_params__(clientRequestPath: str, definedRoutePath: str) -> dict:
+    def __parse_params__(clientRequestPath: str, definedRoutePath: str) -> dict | None:
         # Scan through the route and generate a Regex expression
         # First approach: when a ':' is encountered, scan the next n alphanumeric
         # characters and replace them with the capture group '([A-Za-z0-9_])'
-        # Edge case: when the parameter isn't present?
-
-        # If route doesn't have parameters, return early
-        if ':' not in definedRoutePath:
-            return {}
+        # Edge case: when the parameter isn't present?        
         
         parsingParam = False
         regexStr = ''
@@ -497,7 +501,13 @@ class Router(BaseHTTPRequestHandler):
             paramNames.append(currentParamName)
         
         param_pattern = re.compile(f'^{regexStr}$')
-        param_values = param_pattern.match(clientRequestPath).groups()
+        param_values = param_pattern.match(clientRequestPath)
+
+        if param_values == None: # If the route didn't match
+            return None
+        else:
+            param_values = param_values.groups()
+        
         params: dict = {}
         for n, v in zip(paramNames, param_values):
             params[n] = v
