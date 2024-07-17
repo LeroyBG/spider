@@ -2,10 +2,12 @@
 # then create quality-of-life improvements
 # for now only deal with hard routes without parameters, and the root path
 from typing import overload, Literal
-from io import BufferedIOBase
 import json
 from http.server import BaseHTTPRequestHandler
 import socket
+from http.cookies import SimpleCookie
+from urllib import parse
+import re
 
 type parseMethod = Literal["json", "urlencoded"] | None
 type HTTPMethod = Literal["GET", 
@@ -25,26 +27,30 @@ class NoContentTypeBytes(Exception):
 class Request(BaseHTTPRequestHandler):
     # From Express
     body: dict | None
-    cookies: dict
+    # cookies: dict
     hostName: str
     ip: str
     method: str
     params: dict
     protocol: str
     query: dict # Might be for later implementation
-    res: Response
+    # res: Response
     secure: bool
-    signed_cookies: dict # Not sure about this one
+    # signed_cookies: dict # Not sure about this one
     subdomains: list[str]
     xhr: bool
+    get: callable
 
-    def __init__(self, request, client_address, server, isParsing: parseMethod, method: HTTPMethod):
+    def __init__(self, request, client_address, server, is_body_parsing: parseMethod, 
+                 method: HTTPMethod, isCookieParsing: bool, clientRequestPath: str,
+                 definedRoutePath: str):
         super().__init__(request=request, client_address=client_address, server=server)
-        self.cookies = self.__get_cookies__()
+        # self.cookies = self.__get_cookies__() if isCookieParsing else None
         self.hostName = socket.gethostbyaddr(self.client_address[0])
         self.ip = self.client_address[0]
         self.method = method
-        self.params = self.__parse_params__()
+        self.params = Router.__parse_params__(clientRequestPath, definedRoutePath)
+        self.get = self.headers.get
 
         # "HTTP/1.0" -> "http", "HTTPS/1.0"-> "https"
         self.protocol = self.protocol_version[:self.protocol_version.find('/')].lower()
@@ -54,23 +60,47 @@ class Request(BaseHTTPRequestHandler):
 
         # self.res should be set by function controlling handoff
 
-        self.signed_cookies = self.__get_signed_cookies__()
+        # self.signed_cookies = self.__get_signed_cookies__()
         
         self.subdomains
         self.xhr = self.headers["X-Requested-Wit"] == "XMLHttpRequest"
+        
+        
         # Parse body...
-    
-    def __parse_params__(self):
-        pass
+        if is_body_parsing:
+            self.body = self.__parse_body(is_body_parsing)
+        else:
+            self.body = None
 
+        
+    def __parse_body(self, is_body_parsing: parseMethod) -> dict | None:
+        try: # If the requester doesn't specify content-length, we just read 100 bytes
+                    clen = int(self.headers("Content-Length"))
+        except:
+            clen = 1000
+        raw_body = self.rfile.read( clen )
+
+        if is_body_parsing == "json":
+            return json.loads( raw_body )
+        elif is_body_parsing == "urlencoded":
+            return parse.parse_qs( raw_body )
+        else:
+            return None
+    # Returns a dict of query parameters
+    # Should I expose fact that I'm using urlparse to user so they know what to expect?
     def __parse_query__(self):
-        pass
+        return parse.parse_qs(parse.urlparse(self.path).query)
 
+    # I don't want to do this right now
     def __get_cookies__(self):
-        pass
+        cookie = SimpleCookie()
+        cookie.load()
     
+    # This either
     def __get_signed_cookies__(self):
-        pass
+        cookie = self.headers["Cookie"]
+
+    # NOT IN USE: Will take forever to implement
     # Checks if the specified content types are acceptable, based on the request’s
     # Accept HTTP header field. The method returns the best match, or if none of
     # the specified content types is acceptable, returns false (in which case,
@@ -79,18 +109,17 @@ class Request(BaseHTTPRequestHandler):
     # The type value may be a single MIME type string (such as “application/json”),
     # an extension name such as “json”, a comma-delimited list, or an array. For
     # a list or array, the method returns the best match (if any).
-    @overload
-    def accepts(self, type: str) -> bool:
-        pass
 
-    @overload
-    def accepts(self, types: list[str]) -> bool:
-        pass
+    # @overload
+    # def accepts(self, type: str) -> bool:
+    #     pass
+
+    # @overload
+    # def accepts(self, types: list[str]) -> bool:
+    #     pass
     
     # Returns the specified HTTP request header field (case-insensitive match). 
     # The Referrer and Referer fields are interchangeable.
-    def get(self, field: str) -> str:
-        pass
     
     # This one seems weird
     # Returns the matching content type if the incoming request’s “Content-Type”
@@ -283,14 +312,16 @@ class Response(BaseHTTPRequestHandler):
 type callback = callable[[Request, Response], None]
 
 # A mapping of routes to functions
-type route_mapping = dict[str, callback] 
+type route_mapping = dict[re.Pattern[str], callback] 
 
 # A mapping of types of routes (i.e., GET, POST, etc.) to route_mappings
 type route_type_mapping = dict[HTTPMethod, route_mapping]
 
-class Router():
+class Router(BaseHTTPRequestHandler):
     mappings: route_type_mapping
-    def __init__(self) -> None:
+        
+    def __init__(self, request, client_address, server) -> None:
+        super().__init__(request=request, client_address=client_address, server=server)
         self.mappings = {
             "GET": {},
             "POST": {},
@@ -303,34 +334,178 @@ class Router():
             "PATCH": {}
         }
     
+    def __add_route__(self, method: str, route: str, callback: callback):
+        p = re.compile(self.__convert_param_route_to_dummy_regex__(route))
+        self.mappings[method][p] = callback # I guess patterns are hashable?
+    
+    def __handle_incoming_request__(self, request_type: HTTPMethod, 
+                                    request: str) -> None:
+        # Analyze the request path and ignore query component
+        path: str = parse.urlparse(request).path
+        for pattern in self.mappings[request_type]:
+            if pattern.match(path):
+                req = Request(self)
+                self.__parse_params__(request)
+                res = Response(self)
+                self.mappings[request_type][pattern](req, res)
+                return
+    
+    def do_GET(self):
+        self.__handle_incoming_request__("GET", self.request)
+    
+    def do_POST(self):
+        self.__handle_incoming_request__("POST", self.request)
+    
+    def do_PUT(self):
+        self.__handle_incoming_request__("PUT", self.request)
+    
+    def do_HEAD(self):
+        self.__handle_incoming_request__("HEAD", self.request)
+    
+    def do_DELETE(self):
+        self.__handle_incoming_request__("DELETE", self.request)
+    
+    def do_CONNECT(self):
+        self.__handle_incoming_request__("CONNECT", self.request)
+    
+    def do_OPTIONS(self):
+        self.__handle_incoming_request__("OPTIONS", self.request)
+    
+    def do_TRACE(self):
+        self.__handle_incoming_request__("TRACE", self.request)
+
+    def do_PATH(self):
+        self.__handle_incoming_request__("PATH", self.request)
+
     def get(self, route: str, callback: callback):
-        self.mappings["GET"][route] = callback
+        self.__add_route__("GET", route, callback)
 
     def post(self, route: str, callback: callback):
-        self.mappings["POST"][route] = callback
+        self.__add_route__("POST", route, callback)
         
     def put(self, route: str, callback: callback):
-        self.mappings["PUT"][route] = callback
+        self.__add_route__("PUT", route, callback)
 
     def head(self, route: str, callback: callback):
-        self.mappings["HEAD"][route] = callback
+        self.__add_route__("HEAD", route, callback)
 
     def delete(self, route: str, callback: callback):
-        self.mappings["DELETE"][route] = callback
+        self.__add_route__("DELETE", route, callback)
 
     def connect(self, route: str, callback: callback):
-        self.mappings["CONNECT"][route] = callback
+        self.__add_route__("CONNECT", route, callback)
 
     def options(self, route: str, callback: callback):
-        self.mappings["OPTIONS"][route] = callback
+        self.__add_route__("OPTIONS", route, callback)
 
     def trace(self, route: str, callback: callback):
-        self.mappings["TRACE"][route] = callback
+        self.__add_route__("TRACE", route, callback)
 
     def path(self, route: str, callback: callback):
-        self.mappings["PATCH"][route] = callback
+        self.__add_route__("PATCH", route, callback)
+
+    # We need a dummy regex with no captures that takes a route with parameters
+    # like '/books/:section/:number/' and converts it to a regex that accepts
+    # any url path with those parameters filled in.
+    # Valid characters for variable values are [^/-.]
+    # Note: when using routes with params, we apply very similar regex to the
+    # same path twice - maybe fix this one day
+    def __convert_param_route_to_dummy_regex__(defined_route_path: str):
+        # The only character we handle in a special way is '*', e.g. '/foo/*',
+        # which corresponds to the regex '/foo/.*'
+        valid_name_chars = re.compile("[A-Za-z0-9_]")
+        literal_chars = '.-'
+        parsing_param = False
+        regex_str = ''
+        for c in defined_route_path:
+            if c == ':':
+                if parsing_param: # Treat ':' like any other valid character
+                    continue
+                else: # start replacing a param name with
+                    parsing_param = True
+                    regex_str += '[^-./]+'
+            elif not valid_name_chars.match(c): # Stop parsing param name
+                if parsing_param:
+                    parsing_param = False
+                    
+
+                if c in literal_chars:
+                    regex_str += f'\\{c}'
+                    # If this character is a character that should be
+                    # interpreted literally, escape it
+                    # ':hello+' becomes '[^-./]+\+'
+                else:
+                    regex_str += c
+            else:
+                if parsing_param:
+                    continue
+                else:
+                    regex_str += c
+        return f'^{regex_str}$'
+
+    # This one is a lot of heavy lifting:
+    # A url can contain parameters, like "/users/:userId/books/:bookId" (2 params)
+    # Do some regex with captures?? idk
+    def __parse_params__(clientRequestPath: str, definedRoutePath: str) -> dict:
+        # Scan through the route and generate a Regex expression
+        # First approach: when a ':' is encountered, scan the next n alphanumeric
+        # characters and replace them with the capture group '([A-Za-z0-9_])'
+        # Edge case: when the parameter isn't present?
+
+        # If route doesn't have parameters, return early
+        if ':' not in definedRoutePath:
+            return {}
+        
+        parsingParam = False
+        regexStr = ''
+        valid_param_name_char = re.compile("[A-Za-z0-9_]")
+        invalid_val_chars = '-.'
+        paramNames: list[str] = []
+        currentParamName = ''
+        for c in definedRoutePath:
+            valid_name_char = valid_param_name_char.match(c) 
+            if c == ':':
+                # If we're already parsing a param and we come to a colon, 
+                # treat it like any other valid character, so the param's name
+                # will be 'books:id' (probably a user error, but more
+                # transparent this way)
+                if parsingParam:
+                    currentParamName += c
+                else:
+                    parsingParam = True
+                    regexStr += '([^-./]+)'
+                    currentParamName = ''
+            elif not valid_name_char: # Stop parsing current param
+                if parsingParam:
+                    parsingParam = False
+                    paramNames.append(currentParamName)
+                    
+                if c in invalid_val_chars:
+                    regex_str += f'\\{c}'
+                    # If this character is a character that should be
+                    # interpreted literally, escape it
+                    # ':hello+' becomes '[^-./]+\+'
+                else:
+                    regexStr += c
+            else: # Is a valid param name character
+                if parsingParam:
+                    currentParamName += c
+                else:
+                    regexStr += c
+        if parsingParam:
+            parsingParam = False
+            paramNames.append(currentParamName)
+        
+        param_pattern = re.compile(f'^{regexStr}$')
+        param_values = param_pattern.match(clientRequestPath).groups()
+        params: dict = {}
+        for n, v in zip(paramNames, param_values):
+            params[n] = v
+        return params
+
 
 # example usage:
 # router = Spider.Router()
 # router.get("/hello", handle_hello)
 
+Router.__parse_params__("/users/jknasfjk134123412kjn14/books/klkjn21n4kj12n4k21m312", "/users/:userId/books/:bookId")
