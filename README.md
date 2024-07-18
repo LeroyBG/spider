@@ -2,6 +2,22 @@
 
 Spider is a minimal framework for building web APIs with Python.
 
+## Usage
+
+### Minimal Example
+
+```Python
+from Spider import Router, Request, Response
+
+def root_get(req: Request, res: Response):
+    res.status(200)
+    res.send(f'hello, {req.client_address}')
+
+router = Router()
+router.get("/", root_get)
+router.listen(3000)
+```
+
 ## Route Matching
 
 Valid characters for a route are
@@ -16,6 +32,7 @@ and will instead be interpreted literally, meaning an exact match will be
 needed.
 
 A route name is processed using the following steps
+
 1. Prepend the character '^' to the beginning of the string and '$' to the end
 2. Compile the string as a regex using `re.compile()`
 3. Check if the current route matches the compiled pattern
