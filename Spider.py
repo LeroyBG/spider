@@ -1,7 +1,7 @@
 # Basically just need to create a mapping between routes and functions,
 # then create quality-of-life improvements
 # for now only deal with hard routes without parameters, and the root path
-from typing import overload, Literal
+from typing import overload, Literal, Callable
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import socket
@@ -39,7 +39,7 @@ class Request():
     # signed_cookies: dict # Not sure about this one
     subdomains: list[str]
     xhr: bool
-    get: callable[str, str]
+    get: Callable[[str], str]
     method: HTTPMethod # Same as self.command, just for express compatibility
 
     # No more inheritance! -- below are all copied from BaseHTTPRequestHandler
@@ -174,18 +174,19 @@ class Request():
 # isn't supported
 type sendable = bytes | str | bool | list | dict
 type jsonable = str | dict | list | int | bool |  None
-class Response(BaseHTTPRequestHandler):
+class Response():
+    handler: BaseHTTPRequestHandler # ChatGPT's suggestion
     headers: dict[str, str]
     code: int | None # i.e. 200 - ok
     # Need to store content length & type stuff separate
     content_type: str | None
     content_encoding : str | None
-    def __init__(self, request, client_address, server):
-        super().__init__(request=request, client_address=client_address, server=server)
+    def __init__(self, handler: BaseHTTPRequestHandler):
         self.headers = {} # Will re-write existing "headers" instance variable
         self.code = None
         self.content_type = None
         self.content_encoding = None
+        self.handler = handler
     
     # TODO: important: add support for sending buffers
     # Sends specified message, defaults to utf-8 encoding
@@ -208,34 +209,36 @@ class Response(BaseHTTPRequestHandler):
             return
         
         if "Content-Length" not in self.headers:
-            self.headers["Content-Length"] = str(len(bytes))
+            self.headers["Content-Length"] = str(len(encoded))
         
         try:
             clen = int( self.headers["Content-Length"] )
         except:
             clen = len(bytes)
+            self.headers["Content-Length"] = str(clen)
 
         self.__finalize_response_code__()
         self.__finalize_headers__()
-        # Can raise an exception if write fails, but I think this should be exposed to sure
-        self.wfile.write(encoded[:self.headers["Content-Length"]], clen)
+        # Can raise an exception if write fails, but I think this should be
+        # exposed to user
+        self.handler.wfile.write(encoded)
 
     def __handle_bytes__(self, bytes: bytes) -> bytes:
         self.content_type = self.content_type or "application/octet-stream"
         
         return bytes
     
-    def __handle_str__(self, str: str) -> bytes:
+    def __handle_str__(self, string: str) -> bytes:
         self.content_type = self.content_type or "text/html"
         self.content_encoding = self.content_encoding or "utf-8"
         
-        return str.encode(self.content_encoding, 'ignore')  
+        return string.encode(self.content_encoding, 'ignore')  
     
-    def __handle_bool__(self, bool: bool) -> bytes:
+    def __handle_bool__(self, boolean: bool) -> bytes:
         self.content_type = self.content_type or "text/plain"
         self.content_encoding = self.content_encoding or "utf-8"
 
-        return str(bool).encode(self.content_encoding, 'ignore')
+        return str(boolean).encode(self.content_encoding, 'ignore')
     
     def __handle__jsonable__(self, jsonable: jsonable) -> bytes:
         self.content_type = self.content_type or "application/json"
@@ -252,7 +255,7 @@ class Response(BaseHTTPRequestHandler):
     # int, or None.
     def json(self, msg: jsonable) -> None:
         # Will also set Content-Type header
-        encoded = self.__handle_jsonable__(msg)
+        encoded = self.__handle__jsonable__(msg)
 
         self.content_type = "application/json"
         self.content_encoding = "utf-8"
@@ -260,23 +263,23 @@ class Response(BaseHTTPRequestHandler):
 
         self.__finalize_response_code__()
         self.__finalize_headers__()
-        self.wfile.write(encoded)
+        self.handler.wfile.write(encoded)
     
     # When a message is sent, we have to convert the headers to a object we
     # can use. This should only be used when the message is being sent
     def __finalize_headers__(self) -> None:
         for head in self.headers:
-            self.send_header(head, self.headers[head])
+            self.handler.send_header(head, self.headers[head])
         self.headers["Content-Type"] = f"{self.content_type or "text/plain"}; charset={self.content_encoding or "utf-8"}"
-        self.end_headers()
+        self.handler.end_headers()
     
     # When a message is sent, it needs a status code. This will default to 200
     # unless otherwise specified
     def __finalize_response_code__(self) -> None:
         if not self.code:
-            self.send_response(200)
+            self.handler.send_response(200)
         else:
-            self.send_response(self.code)
+            self.handler.send_response(self.code)
     
     # Sets the response HTTP status code to statusCode and sends the registered
     # status message as the text response body. If an unknown status code is
@@ -318,7 +321,7 @@ class Response(BaseHTTPRequestHandler):
     @overload
     def redirect(self, path: str) -> None:
         self.status(302)
-        self.set("Location", path)
+        self.headers["Location"] = path
         self.__finalize_headers__()
 
     @overload
@@ -337,7 +340,7 @@ class Response(BaseHTTPRequestHandler):
 
 
 # A function that handles requests
-type callback = callable[[Request, Response], None]
+type callback = Callable[[Request, Response], None]
 
 # A mapping of routes to functions
 type route_mapping = dict[str, callback] 
@@ -390,6 +393,8 @@ class Router():
                 return (defined_route_path, self.mappings[request_type][defined_route_path])
         return None
     
+    # TODO: Allow user to specify config options like parseMethod,
+    # is_cookie_parsing, etc.
     def __handle_incoming_request__(self, command: HTTPMethod, 
                                     request_path: str, 
                                     handler: BaseHTTPRequestHandler):
@@ -398,14 +403,18 @@ class Router():
         # Callback is a tuple if a match is found
         if callback:
             print("time to call this callback")
-            res = Response(request=handler.request, client_address=handler.client_address, server=handler.server)
-            req = Request(handler.request, 
-                          client_address=handler.client_address,
-                          server=handler.server,
-                          is_body_parsing=self.is_body_parsing, method=command,
-                          is_cookie_parsing=self.is_cookie_parsing,
+            res = Response(handler=handler)
+            req = Request(client_address=handler.client_address,
+                          server=handler.server, is_body_parsing='json',
+                          is_cookie_parsing=False,
                           client_request_path=request_path,
-                          defined_route_path=callback[0])
+                          defined_route_path=callback[0], requestline=handler.requestline,
+                          headers=handler.headers,
+                          server_version=handler.server_version,
+                          sys_version=handler.sys_version,
+                          error_content_type=handler.error_content_type,
+                          protocol_version=handler.protocol_version,
+                          method=command)
             # THE ISSUE IS THE LINE ABOVE ^
             print("do we make it here?")
             print(req)
@@ -530,7 +539,8 @@ class Router():
     # A url can contain parameters, like "/users/:userId/books/:bookId" (2 params)
     # Do some regex with captures?? idk
     # TODO: Make this a static class method that doesn't have 'self' parameter
-    def __parse_params__(self, client_request_path: str, defined_route_path: str) -> dict | None:
+    @staticmethod
+    def __parse_params__(client_request_path: str, defined_route_path: str) -> dict | None:
         # Scan through the route and generate a Regex expression
         # First approach: when a ':' is encountered, scan the next n alphanumeric
         # characters and replace them with the capture group '([A-Za-z0-9_])'
