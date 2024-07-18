@@ -3,7 +3,7 @@
 # for now only deal with hard routes without parameters, and the root path
 from typing import overload, Literal
 import json
-from http.server import BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import socket
 from http.cookies import SimpleCookie
 from urllib import parse
@@ -68,14 +68,14 @@ class Request(BaseHTTPRequestHandler):
         
         # Parse body...
         if is_body_parsing:
-            self.body = self.__parse_body(is_body_parsing)
+            self.body = self.__parse_body__(is_body_parsing)
         else:
             self.body = None
 
         
-    def __parse_body(self, is_body_parsing: parseMethod) -> dict | None:
+    def __parse_body__(self, is_body_parsing: parseMethod) -> dict | None:
         try: # If the requester doesn't specify content-length, we just read 100 bytes
-                    clen = int(self.headers("Content-Length"))
+            clen = int(self.headers("Content-Length"))
         except:
             clen = 1000
         raw_body = self.rfile.read( clen )
@@ -317,11 +317,15 @@ type route_mapping = dict[str, callback]
 # A mapping of types of routes (i.e., GET, POST, etc.) to route_mappings
 type route_type_mapping = dict[HTTPMethod, route_mapping]
 
-class Router(BaseHTTPRequestHandler):
+class Router():
     mappings: route_type_mapping
+    is_body_parsing: bool
+    is_cookie_parsing: bool
+    current_request: BaseHTTPRequestHandler
         
-    def __init__(self, request, client_address, server) -> None:
-        super().__init__(request=request, client_address=client_address, server=server)
+    def __init__(self, is_body_parsing=False, is_cookie_parsing=False) -> None:
+        self.is_body_parsing = is_body_parsing
+        self.is_cookie_parsing = is_cookie_parsing
         self.mappings = {
             "GET": {},
             "POST": {},
@@ -337,51 +341,94 @@ class Router(BaseHTTPRequestHandler):
     def __add_route__(self, method: str, route: str, callback: callback):
         self.mappings[method][route] = callback # I guess patterns are hashable?
     
-    def __handle_incoming_request__(self, request_type: HTTPMethod, 
-                                    request: str) -> None:
+    # Take a client request and return the matched path and callback for it if one is found
+    def __match_request_to_callback__(self, request_type: HTTPMethod, 
+                                    request: str) -> tuple[str, callback] | None:
+        print(self.mappings)
         # Analyze the request path and ignore query component
         path: str = parse.urlparse(request).path
+        print(request_type)
+        print(self.mappings[request_type])
         for defined_route_path in self.mappings[request_type]:
             # TODO: Pre-compile regex and use named capture groups so we don't
             # have to keep the original defined route path
 
             match_params = self.__parse_params__(path, defined_route_path)
+            print(match_params)
             if match_params == None:
                 continue
 
             else:
-                req = Request(self)
-                req.params = match_params
-                res = Response(self)
-                self.mappings[request_type][defined_route_path](req, res)
-                return
+                return (defined_route_path, self.mappings[request_type][defined_route_path])
+        return None
     
-    def do_GET(self):
-        self.__handle_incoming_request__("GET", self.request)
-    
-    def do_POST(self):
-        self.__handle_incoming_request__("POST", self.request)
-    
-    def do_PUT(self):
-        self.__handle_incoming_request__("PUT", self.request)
-    
-    def do_HEAD(self):
-        self.__handle_incoming_request__("HEAD", self.request)
-    
-    def do_DELETE(self):
-        self.__handle_incoming_request__("DELETE", self.request)
-    
-    def do_CONNECT(self):
-        self.__handle_incoming_request__("CONNECT", self.request)
-    
-    def do_OPTIONS(self):
-        self.__handle_incoming_request__("OPTIONS", self.request)
-    
-    def do_TRACE(self):
-        self.__handle_incoming_request__("TRACE", self.request)
+    def __handle_incoming_request__(self, command: HTTPMethod, 
+                                    request_path: str, 
+                                    handler: BaseHTTPRequestHandler):
+        callback = self.__match_request_to_callback__(command, request_path)
+        print(callback)
+        # Callback is a tuple if a match is found
+        if callback:
+            print("time to call this callback")
+            res = Response(request=handler.request, client_address=handler.client_address, server=handler.server)
+            req = Request(handler.request, 
+                          client_address=handler.client_address,
+                          server=handler.server,
+                          is_body_parsing=self.is_body_parsing, method=command,
+                          isCookieParsing=self.is_cookie_parsing,
+                          clientRequestPath=request_path,
+                          definedRoutePath=callback[0])
+            # THE ISSUE IS THE LINE ABOVE ^
+            print("do we make it here?")
+            print(req)
+            print(res)
+            callback_fn = callback[1]
+            callback_fn(req, res)
+            return
 
-    def do_PATH(self):
-        self.__handle_incoming_request__("PATH", self.request)
+    
+    def listen(self, port: int):
+        router = self
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                # router.current_request = self
+                router.__handle_incoming_request__("GET", self.path, self)
+            
+            def do_POST(self):
+                # router.current_request = self
+                router.__handle_incoming_request__("POST", self.path, self)
+            
+            def do_PUT(self):
+                # router.current_request = self
+                router.__handle_incoming_request__("PUT", self.path, self)
+            
+            def do_HEAD(self):
+                # router.current_request = self
+                router.__handle_incoming_request__("HEAD", self.path, self)
+            
+            def do_DELETE(self):
+                # router.current_request = self
+                router.__handle_incoming_request__("DELETE", self.path, self)
+            
+            def do_CONNECT(self):
+                # router.current_request = self
+                router.__handle_incoming_request__("CONNECT", self.path, self)
+            
+            def do_OPTIONS(self):
+                # router.current_request = self
+                router.__handle_incoming_request__("OPTIONS", self.path, self)
+            
+            def do_TRACE(self):
+                # router.current_request = self
+                router.__handle_incoming_request__("TRACE", self.path, self)
+
+            def do_PATH(self):
+                # router.current_request = self
+                router.__handle_incoming_request__("PATH", self.path, self)
+        
+        httpd = HTTPServer(('localhost', port), Handler)
+        httpd.serve_forever()
+    
 
     def get(self, route: str, callback: callback):
         self.__add_route__("GET", route, callback)
@@ -454,7 +501,8 @@ class Router(BaseHTTPRequestHandler):
     # This one is a lot of heavy lifting:
     # A url can contain parameters, like "/users/:userId/books/:bookId" (2 params)
     # Do some regex with captures?? idk
-    def __parse_params__(clientRequestPath: str, definedRoutePath: str) -> dict | None:
+    # TODO: Make this a static class method that doesn't have 'self' parameter
+    def __parse_params__(self, clientRequestPath: str, definedRoutePath: str) -> dict | None:
         # Scan through the route and generate a Regex expression
         # First approach: when a ':' is encountered, scan the next n alphanumeric
         # characters and replace them with the capture group '([A-Za-z0-9_])'
@@ -514,8 +562,12 @@ class Router(BaseHTTPRequestHandler):
         return params
 
 
-# example usage:
-# router = Spider.Router()
-# router.get("/hello", handle_hello)
+if __name__ == '__main__':
+    router = Router()
 
-Router.__parse_params__("/users/jknasfjk134123412kjn14/books/klkjn21n4kj12n4k21m312", "/users/:userId/books/:bookId")
+    def root_get(req: Request, res: Response):
+        res.status(200)
+        res.send("Hello World!")
+    
+    router.get("/", root_get)
+    router.listen(3000)
