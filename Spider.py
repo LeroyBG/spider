@@ -24,7 +24,7 @@ type HTTPMethod = Literal["GET",
 class NoContentTypeBytes(Exception):
     pass
 
-class Request(BaseHTTPRequestHandler):
+class Request():
     # From Express
     body: dict | None
     # cookies: dict
@@ -39,32 +39,59 @@ class Request(BaseHTTPRequestHandler):
     # signed_cookies: dict # Not sure about this one
     subdomains: list[str]
     xhr: bool
-    get: callable
+    get: callable[str, str]
+    method: HTTPMethod # Same as self.command, just for express compatibility
 
-    def __init__(self, request, client_address, server, is_body_parsing: parseMethod, 
-                 method: HTTPMethod, isCookieParsing: bool, clientRequestPath: str,
-                 definedRoutePath: str):
-        super().__init__(request=request, client_address=client_address, server=server)
-        # self.cookies = self.__get_cookies__() if isCookieParsing else None
+    # No more inheritance! -- below are all copied from BaseHTTPRequestHandler
+    # Could use Object.assign() method in the future? Not sure if that's better
+    # than doing it explicitly
+    client_address: tuple[str, int]
+    server: HTTPServer
+    requestline: str
+    command: HTTPMethod
+    path: str # Client request path
+    headers: dict # Not sure about this type definition
+    server_version: str
+    sys_version: str
+    # error_message_format -- ignore for now
+    error_content_type: str
+    protocol_version: str
+    
+    def __init__(self, client_address, server, is_body_parsing: parseMethod,
+                 method: HTTPMethod, is_cookie_parsing: bool,
+                 client_request_path: str, defined_route_path: str,
+                 requestline: str, headers: dict, server_version: str,
+                 sys_version: str, error_content_type: str,
+                 protocol_version: str):
+        
+        # Copy down things that used to be inherited
+        self.client_address = client_address
+        self.server = server
+        self.requestline = requestline
+        self.command = self.method = method
+        self.path = client_request_path
+        self.headers = headers
+        self.server_version = server_version
+        self.sys_version = sys_version
+        self.error_content_type = error_content_type
+        self.protocol_version = protocol_version
+
+        # Get Express variables
+        # self.cookies = self.__get_cookies__() if is_cookie_parsing else None
         self.hostName = socket.gethostbyaddr(self.client_address[0])
         self.ip = self.client_address[0]
-        self.method = method
-        self.params = Router.__parse_params__(clientRequestPath, definedRoutePath)
-        self.get = self.headers.get
-
+        # self.method already initialized
+        self.params = Router.__parse_params__(client_request_path, 
+                                              defined_route_path)
         # "HTTP/1.0" -> "http", "HTTPS/1.0"-> "https"
         self.protocol = self.protocol_version[:self.protocol_version.find('/')].lower()
-        self.secure = self.protocol == 'https'
-
         self.query = self.__parse_query__()
-
         # self.res should be set by function controlling handoff
-
+        self.secure = self.protocol == 'https'
         # self.signed_cookies = self.__get_signed_cookies__()
-        
-        self.subdomains
+        # self.subdomains -- don't know how to do this one for now
         self.xhr = self.headers["X-Requested-Wit"] == "XMLHttpRequest"
-        
+        self.get = self.headers.get
         
         # Parse body...
         if is_body_parsing:
@@ -74,10 +101,10 @@ class Request(BaseHTTPRequestHandler):
 
         
     def __parse_body__(self, is_body_parsing: parseMethod) -> dict | None:
-        try: # If the requester doesn't specify content-length, we just read 100 bytes
-            clen = int(self.headers("Content-Length"))
+        try: # If the requester doesn't specify content-length, return None
+            clen = int(self.headers["Content-Length"])
         except:
-            clen = 1000
+            return None
         raw_body = self.rfile.read( clen )
 
         if is_body_parsing == "json":
@@ -86,6 +113,7 @@ class Request(BaseHTTPRequestHandler):
             return parse.parse_qs( raw_body )
         else:
             return None
+    
     # Returns a dict of query parameters
     # Should I expose fact that I'm using urlparse to user so they know what to expect?
     def __parse_query__(self):
@@ -136,8 +164,8 @@ class Request(BaseHTTPRequestHandler):
     # req.query
     # Optionally, you can specify defaultValue to set a default value if the
     # parameter is not found in any of the request objects.
-    def param(self, name: str) -> str:
-        pass
+    def param(self, name: str) -> str | None:
+        return self.params[name] if name in self.params else None
     
 
 
@@ -375,9 +403,9 @@ class Router():
                           client_address=handler.client_address,
                           server=handler.server,
                           is_body_parsing=self.is_body_parsing, method=command,
-                          isCookieParsing=self.is_cookie_parsing,
-                          clientRequestPath=request_path,
-                          definedRoutePath=callback[0])
+                          is_cookie_parsing=self.is_cookie_parsing,
+                          client_request_path=request_path,
+                          defined_route_path=callback[0])
             # THE ISSUE IS THE LINE ABOVE ^
             print("do we make it here?")
             print(req)
@@ -502,7 +530,7 @@ class Router():
     # A url can contain parameters, like "/users/:userId/books/:bookId" (2 params)
     # Do some regex with captures?? idk
     # TODO: Make this a static class method that doesn't have 'self' parameter
-    def __parse_params__(self, clientRequestPath: str, definedRoutePath: str) -> dict | None:
+    def __parse_params__(self, client_request_path: str, defined_route_path: str) -> dict | None:
         # Scan through the route and generate a Regex expression
         # First approach: when a ':' is encountered, scan the next n alphanumeric
         # characters and replace them with the capture group '([A-Za-z0-9_])'
@@ -514,7 +542,7 @@ class Router():
         invalid_val_chars = '-.'
         paramNames: list[str] = []
         currentParamName = ''
-        for c in definedRoutePath:
+        for c in defined_route_path:
             valid_name_char = valid_param_name_char.match(c) 
             if c == ':':
                 # If we're already parsing a param and we come to a colon, 
@@ -549,7 +577,7 @@ class Router():
             paramNames.append(currentParamName)
         
         param_pattern = re.compile(f'^{regexStr}$')
-        param_values = param_pattern.match(clientRequestPath)
+        param_values = param_pattern.match(client_request_path)
 
         if param_values == None: # If the route didn't match
             return None
