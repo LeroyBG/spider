@@ -1,6 +1,25 @@
 # Spider
 
 Spider is a minimal framework for building web APIs with Python.
+Based off the
+[Express.js 4.x](https://expressjs.com/en/4x/api.html#res.download) API, Spider
+provides numerous of the quality-of-life features and abstractions that make
+building your app faster and easier.
+
+## Key Features
+
+### Request Handling
+
+- Include route parameters with `:paramname` and access then through
+  `req.params["paramname"]`
+- Automatic body parsing (supports json and urlencoded)
+- Automatic query parsing
+
+### Response Handling
+
+- Easily send responses with `res.send` and `res.json` methods (both
+  automatically set content length and latter sets content-type)
+- Chain response methods, i.e. `res.status(200).send("hello")`
 
 ## Usage
 
@@ -10,12 +29,49 @@ Spider is a minimal framework for building web APIs with Python.
 from Spider import Router, Request, Response
 
 def root_get(req: Request, res: Response):
-    res.status(200)
-    res.send(f'hello, {req.client_address}')
+    res.status(200).send(f'hello, {req.client_address}')
 
 router = Router()
 router.get("/", root_get)
 router.listen(3000)
+```
+
+### Multiple Methods on a Route
+
+```Python
+router = Router()
+def root_get(req: Request, res: Response):
+    # Same as before...
+router.get("/", root_get)
+
+def root_put(req: Request, res: Response):
+    res.status(201).json({
+        "username": "blah",
+        "password": 123
+    })
+router.put("/", root_put)
+
+# And so on...
+```
+
+### Defining Multiple Routes
+
+```Python
+def root_get(req: Request, res: Response):
+    # ...
+router.get("/", root_get)
+
+def root_put(req: Request, res: Response):
+    # ...
+router.put("/", root_get)
+
+def docs_get(req: Request, res: Response):
+    # ...
+router.get("/docs", docs_get)
+
+def docs_upload_by_id(req: Request, res: Response):
+    # ...
+router.post("/docs/:id", docs_upload_by_id)
 ```
 
 ## Route Matching
