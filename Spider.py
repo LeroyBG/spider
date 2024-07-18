@@ -1,7 +1,7 @@
 # Basically just need to create a mapping between routes and functions,
 # then create quality-of-life improvements
 # for now only deal with hard routes without parameters, and the root path
-from typing import overload, Literal, Callable
+from typing import overload, Literal, Callable, Self
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import socket
@@ -289,20 +289,22 @@ class Response():
         self.send(self.responses[status])
     
     # Sets the HTTP status for the response
-    def status(self, status: int) -> None:
+    def status(self, status: int) -> Self:
         self.code = status
-
+        return self
 
     # Set HTTP response headers
     @overload
-    def set(self, head: str, val: str) -> None:
+    def set(self, head: str, val: str) -> Self:
         self.headers[head] = val
+        return self
     
     @overload
-    def set(self, headers: dict[str, int]) -> None:
+    def set(self, headers: dict[str, int]) -> Self:
         for head in headers:
             val = headers[head]
             self.headers[head] = val
+        return self
 
     # Returns the HTTP response header specified by field.
     # The match is case-insensitive.
@@ -375,17 +377,13 @@ class Router():
     # Take a client request and return the matched path and callback for it if one is found
     def __match_request_to_callback__(self, request_type: HTTPMethod, 
                                     request: str) -> tuple[str, callback] | None:
-        print(self.mappings)
         # Analyze the request path and ignore query component
         path: str = parse.urlparse(request).path
-        print(request_type)
-        print(self.mappings[request_type])
         for defined_route_path in self.mappings[request_type]:
             # TODO: Pre-compile regex and use named capture groups so we don't
             # have to keep the original defined route path
 
             match_params = self.__parse_params__(path, defined_route_path)
-            print(match_params)
             if match_params == None:
                 continue
 
@@ -399,10 +397,8 @@ class Router():
                                     request_path: str, 
                                     handler: BaseHTTPRequestHandler):
         callback = self.__match_request_to_callback__(command, request_path)
-        print(callback)
         # Callback is a tuple if a match is found
         if callback:
-            print("time to call this callback")
             res = Response(handler=handler)
             req = Request(client_address=handler.client_address,
                           server=handler.server, is_body_parsing='json',
@@ -416,9 +412,6 @@ class Router():
                           protocol_version=handler.protocol_version,
                           method=command)
             # THE ISSUE IS THE LINE ABOVE ^
-            print("do we make it here?")
-            print(req)
-            print(res)
             callback_fn = callback[1]
             callback_fn(req, res)
             return
@@ -604,8 +597,7 @@ if __name__ == '__main__':
     router = Router()
 
     def root_get(req: Request, res: Response):
-        res.status(200)
-        res.send("Hello World!")
+        res.status(200).send("Hello World!")
     
     router.get("/", root_get)
     router.listen(3000)
