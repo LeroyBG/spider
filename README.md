@@ -37,7 +37,7 @@ A route name is processed using the following steps
 2. Compile the string as a regex using `re.compile()`
 3. Check if the current route matches the compiled pattern
 
-Routes are consulted in the order they're listed, meaning the route '*' will
+Routes are consulted in the order they're listed, meaning the route `"*"` will
 process every request your server receives if it's listed first. If you list
-the route '*' after all other routes, it will match every route that doesn't
+the route `"*"` after all other routes, it will match every route that doesn't
 match one of those routes.
