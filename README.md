@@ -110,7 +110,7 @@ variables and methods for parsing and retrieving request information.
 
 A `dict` containing key-value pairs of data submitted in the request body.
 Is `None` by default, but can be configured using
-[`Router.use([parse method])`](# `router.use`).
+[`Router.use([parse method])`](#routeruse).
 
 ```Python
 def cart_add(req: Request, res: Response):
@@ -188,7 +188,7 @@ A Boolean property that is true if the request’s X-Requested-With header field
 
 #### Request Instance Methods
 
-`req.get(field)`
+##### `req.get(field)`
 
 Retrieves the value of the specified http header. Same as
 `req.headers.get(field)`.
