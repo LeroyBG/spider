@@ -57,7 +57,7 @@ class Request():
     error_content_type: str
     protocol_version: str
     
-    def __init__(self, client_address, server, is_body_parsing: parseMethod,
+    def __init__(self, client_address, server, parse_method: parseMethod,
                  method: HTTPMethod, is_cookie_parsing: bool,
                  client_request_path: str, defined_route_path: str,
                  requestline: str, headers: dict, server_version: str,
@@ -94,22 +94,22 @@ class Request():
         self.get = self.headers.get
         
         # Parse body...
-        if is_body_parsing:
-            self.body = self.__parse_body__(is_body_parsing)
+        if parse_method:
+            self.body = self.__parse_body__(parse_method)
         else:
             self.body = None
 
         
-    def __parse_body__(self, is_body_parsing: parseMethod) -> dict | None:
+    def __parse_body__(self, parse_method: parseMethod) -> dict | None:
         try: # If the requester doesn't specify content-length, return None
             clen = int(self.headers["Content-Length"])
         except:
             return None
         raw_body = self.rfile.read( clen )
 
-        if is_body_parsing == "json":
+        if parse_method == "json":
             return json.loads( raw_body )
-        elif is_body_parsing == "urlencoded":
+        elif parse_method == "urlencoded":
             return parse.parse_qs( raw_body )
         else:
             return None
@@ -178,6 +178,7 @@ class Response():
     handler: BaseHTTPRequestHandler # ChatGPT's suggestion
     headers: dict[str, str]
     code: int | None # i.e. 200 - ok
+    responses: dict # Inherited from BaseHTTPRequestHandler
     # Need to store content length & type stuff separate
     content_type: str | None
     content_encoding : str | None
@@ -187,6 +188,7 @@ class Response():
         self.content_type = None
         self.content_encoding = None
         self.handler = handler
+        self.responses = handler.responses
     
     # TODO: important: add support for sending buffers
     # Sends specified message, defaults to utf-8 encoding
@@ -253,9 +255,9 @@ class Response():
     # string using json.dumps().
     # The parameter can be any JSON type, including dict, list, str, bool,
     # int, or None.
-    def json(self, msg: jsonable) -> None:
+    def json(self, body: jsonable) -> None:
         # Will also set Content-Type header
-        encoded = self.__handle__jsonable__(msg)
+        encoded = self.__handle__jsonable__(body)
 
         self.content_type = "application/json"
         self.content_encoding = "utf-8"
@@ -284,9 +286,12 @@ class Response():
     # Sets the response HTTP status code to statusCode and sends the registered
     # status message as the text response body. If an unknown status code is
     # specified, the response body will just be the code number.
-    def sendStatus(self, status: int) -> None:
-        self.code = status
-        self.send(self.responses[status])
+    def sendStatus(self, code: int) -> None:
+        self.code = code
+        if code not in self.responses:
+            self.end()
+        else:
+            self.send(self.responses[code])
     
     # Sets the HTTP status for the response
     def status(self, status: int) -> Self:
@@ -352,12 +357,12 @@ type route_type_mapping = dict[HTTPMethod, route_mapping]
 
 class Router():
     mappings: route_type_mapping
-    is_body_parsing: bool
+    parse_method: parseMethod
     is_cookie_parsing: bool
     current_request: BaseHTTPRequestHandler
         
-    def __init__(self, is_body_parsing=False, is_cookie_parsing=False) -> None:
-        self.is_body_parsing = is_body_parsing
+    def __init__(self, is_cookie_parsing=False) -> None:
+        self.parse_method = None
         self.is_cookie_parsing = is_cookie_parsing
         self.mappings = {
             "GET": {},
@@ -401,7 +406,7 @@ class Router():
         if callback:
             res = Response(handler=handler)
             req = Request(client_address=handler.client_address,
-                          server=handler.server, is_body_parsing='json',
+                          server=handler.server, parse_method=self.parse_method,
                           is_cookie_parsing=False,
                           client_request_path=request_path,
                           defined_route_path=callback[0],
@@ -417,6 +422,14 @@ class Router():
             callback_fn(req, res)
             return
 
+    def parse(self, parse_method: parseMethod) -> None:
+        valid_parse_methods = ['urlencoded', 'json']
+        if parse_method not in valid_parse_methods:
+            s_parse_methods = ''.join(valid_parse_methods)
+            valid_parse_methods
+            raise Exception(f"{parse_method} not one of {s_parse_methods}")
+        
+        self.parse_method = parse_method
     
     def listen(self, port: int):
         router = self
@@ -485,10 +498,10 @@ class Router():
     def trace(self, route: str, callback: callback):
         self.__add_route__("TRACE", route, callback)
 
-    def path(self, route: str, callback: callback):
+    def patch(self, route: str, callback: callback):
         self.__add_route__("PATCH", route, callback)
 
-    def all(self, route: str, callback: callbacl):
+    def all(self, route: str, callback: callback):
         for c in ["GET", "POST", "PUT", "HEAD", "DELETE", "CONNECT", "OPTIONS",
                  "TRACE", "PATCH"]:
             self.__add_route__(c, route, callback)

@@ -186,7 +186,7 @@ A boolean containing the value of `req.protocol == 'https'`.
 
 A Boolean property that is true if the request’s X-Requested-With header field is “XMLHttpRequest”.
 
-#### Request Instance Methods
+#### Request Methods
 
 ##### `req.get(field)`
 
@@ -203,8 +203,157 @@ for troubleshooting: `client_address`, `server`, `requestline`, `command`,
 
 ### Response
 
+The `Response` object represents an in-progress HTTP response and provides
+methods and properties for creating a sending a response.
+
+#### Response Methods
+
+##### `res.end`
+
+Ends the response process. Used to quickly send a response without any data.
+
+```Python
+def get_profile(req: Request, res: Response):
+    # ...
+    if not authorized:
+        res.status(404).end()
+```
+
+##### `res.get(field)`
+
+Returns the HTTP response header specified by field. The match is
+case-insensitive.
+
+##### `res.json([body])`
+
+Sends a JSON response. This method sends a response (with the correct
+content-type) that is the parameter converted to a JSON string using
+[`json.dumps()`](https://docs.python.org/3/library/json.html#basic-usage).
+
+The parameter can be any JSON type, including dict, list, str, bool,
+int, float, or None.
+
+```Python
+# dict
+res.json({
+    "filter": "height",
+    "value": 60,
+    "unit": "cm"
+})
+# --> '{"filter": "height", "value": 60, "unit": "cm"}'
+
+# list
+res.json(["milk", "cereal", "oranges", "apples"])
+# --> '["milk", "cereal", "oranges", "apples"]'
+
+# str
+res.json("Hello World!")
+# --> '"Hello World!"'
+
+# bool
+res.json(False)
+# --> 'false'
+
+# int
+res.json(10000)
+# --> '1000'
+
+# float
+res.json(3.14)
+# --> '3.14'
+
+# None
+res.json(None)
+# --> 'null'
+```
+
+##### `res.redirect([status,] path)`
+
+Redirects to the URL derived from the specified path, with specified status, a positive integer that corresponds to an HTTP status code . If not specified, status defaults to “302 “Found”.
+
+##### `res.send(body)`
+
+Sends the HTTP response.
+
+The body parameter can be a bytes object, a string, an dict, bool, or a list.
+
+This method automatically sets the Content-Type and Content-Length HTTP
+headers, unless previously set.
+
+| `res.send` parameter type | Content-Type header      |
+| ------------------------- | ------------------------ |
+| list, dict                | application/json         |
+| bytes                     | application/octet-stream |
+| str                       | text/html                |
+| bool                      | text/plain               |
+
+##### `res.sendStatus(code)`
+
+Sets the response HTTP status code to statusCode and sends the registered
+status message as the text response body. If an unknown status code is
+specified, the response body will just be the code number.
+
+##### `res.set(field [, value])`
+
+Sets the response’s HTTP header `field` to `value`. To set multiple fields at
+once, pass a dict as the parameter.
+
+```Python
+res.set("Content-Type", "application/json")
+res.set({
+    "Content-Type", "application/json",
+    "Content-Length", 10
+})
+```
+
+##### `res.status(code)`
+
+Sets the HTTP status for the response. Is chainable!
+
+```Python
+res.status(404).send("These aren't the droids you're looking for")
+```
+
 ### Router
 
-#### Router Instance Variables
+The `Router` object's provides functionality for your application to listen for
+HTTP requests and match request paths to appropriate callback functions.
 
-#### `router.use`
+#### Router Methods
+
+##### `router.all(path, callback)`
+
+This method is just like the router.METHOD() methods, except that it matches
+all HTTP methods (verbs).
+
+##### `router.METHOD(path, callback)`
+
+Provides routing functionality. METHOD corresponds to one of the HTTP commands:
+`GET`, `POST`, `PUT`, `HEAD`, `DELETE`, `CONNECT`, `OPTIONS`, `TRACE`, and
+`PATH`. The actual function names are the lowercase version of these commands.
+
+```Python
+def say_hi(req: Request, res: Response):
+    req.send("Hiiii")
+router.get("/hello", say_hi)
+```
+
+##### `router.use([middleware])`
+
+This function will be used for middleware in future version, so don't overwrite
+it.
+
+##### `router.parse(parse_method)`
+
+Specify how the `Router` should parse incoming request the incoming request
+body, **globally**.
+
+`parse_method` can be `'json'` or `'urlencoded'`.
+
+*Note:* In the future, this will be replaced with middleware to allow parsing
+different api endpoints with different/custom parsers.
+
+```Python
+router.parse('json')
+router.listen(3000) # Incoming request bodies parsed with json.load
+```
