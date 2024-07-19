@@ -1,10 +1,9 @@
 # Spider
 
 Spider is a minimal framework for building web APIs with Python.
-Based off the
-[Express.js 4.x](https://expressjs.com/en/4x/api.html#res.download) API, Spider
-provides numerous of the quality-of-life features and abstractions that make
-building your app faster and easier.
+Based off the [Express.js 4.x](https://expressjs.com/en/4x/api.html) API,
+Spider provides numerous of the quality-of-life features and abstractions that
+make building your app faster and easier.
 
 ## Key Features
 
@@ -97,3 +96,115 @@ Routes are consulted in the order they're listed, meaning the route `"*"` will
 process every request your server receives if it's listed first. If you list
 the route `"*"` after all other routes, it will match every route that doesn't
 match one of those routes.
+
+## API
+
+### Request
+
+The `Request` object represents the HTTP request and provides useful instance
+variables and methods for parsing and retrieving request information.
+
+#### Request Instance Variables
+
+##### `req.body`
+
+A `dict` containing key-value pairs of data submitted in the request body.
+Is `None` by default, but can be configured using
+[`Router.use([parse method])`](# `router.use`).
+
+```Python
+def cart_add(req: Request, res: Response):
+    req.body["itemName"] # E.g. "carrot"
+    req.body["details"]["code"] # and so forth...
+```
+
+##### `req.hostname`
+
+Contains server's hostname.
+
+##### `req.ip`
+
+Returns client's ip address.
+
+##### `req.method`
+
+A string representing the request method/command: GET, POST, PUT, etc.
+
+##### `req.params`
+
+A `dict` containing key-value pairs of data sent in place of parameters in the
+specified path.
+
+```Python
+# "/books/:category/:popularityRank"
+def get_book_by_popularity(req: Request, res: Response):
+    category = req.params["category"] # E.g. 'nonfiction'
+    rank = req.params["popularityRank"] # E.g. 47
+router.get("/books/:category/:popularityRank", get_book_by_popularity)
+```
+
+The `.` characters is interpreted literally, which makes it easy to put params
+next to each other.
+
+```Python
+# "/dict.:category.:sub_category"
+def get_object_properties(req: Request, res: Response):
+    category = req.params["category"]
+    sub = req.params["sub_category"]
+    res.json(dictionary[category][sub])
+```
+
+##### `req.path`
+
+Contains a string representation of the path part of the request url. For
+example, a request sent to `"/course?id=a123123&date=2012"` will have
+`req.path` equal to `"/course"`.
+
+##### `req.protocol'
+
+Contains the request protocol string: either `"http"` or `"https"`.
+*Note:* this property currently a constant with value `"http"`.
+
+##### `req.query`
+
+A `dict` containing the result of parsing the request query via
+`urllib.parse.parse_qs`.
+
+```Python
+def convert_query_to_json(req: Request, res: Response):
+    res.json(req.query)
+# E.g., if the request url is "/course?id=a123123&date=2012",
+# req.query is {"id": "123123", "date": "2012"}
+```
+
+##### `req.secure`
+
+A boolean containing the value of `req.protocol == 'https'`.
+*Note:* this property currently a constant with value `False`.
+
+##### `req.xhr`
+
+A Boolean property that is true if the request’s X-Requested-With header field is “XMLHttpRequest”.
+
+#### Request Instance Methods
+
+`req.get(field)`
+
+Retrieves the value of the specified http header. Same as
+`req.headers.get(field)`.
+
+##### Additional Request Variables
+
+The `Request` class also copies the following instance variables from
+[`BaseHTTPRequestHandler`](https://docs.python.org/3/library/http.server.html)
+for troubleshooting: `client_address`, `server`, `requestline`, `command`,
+`path`, `headers`, `server_version`, `sys_version`, `error_content_type`, and
+`protocol_version`.
+
+### Response
+
+### Router
+
+#### Router Instance Variables
+
+#### `router.use`

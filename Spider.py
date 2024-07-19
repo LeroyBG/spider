@@ -28,7 +28,7 @@ class Request():
     # From Express
     body: dict | None
     # cookies: dict
-    hostName: str
+    hostname: str
     ip: str
     method: str
     params: dict
@@ -71,14 +71,14 @@ class Request():
         self.command = self.method = method
         self.path = client_request_path
         self.headers = headers
-        self.server_version = server_version
+        self.server_version = 'Spider/0.1'
         self.sys_version = sys_version
         self.error_content_type = error_content_type
         self.protocol_version = protocol_version
 
         # Get Express variables
         # self.cookies = self.__get_cookies__() if is_cookie_parsing else None
-        self.hostName = socket.gethostbyaddr(self.client_address[0])
+        self.hostname = socket.gethostbyaddr(self.client_address[0])
         self.ip = self.client_address[0]
         # self.method already initialized
         self.params = Router.__parse_params__(client_request_path, 
@@ -404,7 +404,8 @@ class Router():
                           server=handler.server, is_body_parsing='json',
                           is_cookie_parsing=False,
                           client_request_path=request_path,
-                          defined_route_path=callback[0], requestline=handler.requestline,
+                          defined_route_path=callback[0],
+                          requestline=handler.requestline,
                           headers=handler.headers,
                           server_version=handler.server_version,
                           sys_version=handler.sys_version,
@@ -487,6 +488,12 @@ class Router():
     def path(self, route: str, callback: callback):
         self.__add_route__("PATCH", route, callback)
 
+    def all(self, route: str, callback: callbacl):
+        for c in ["GET", "POST", "PUT", "HEAD", "DELETE", "CONNECT", "OPTIONS",
+                 "TRACE", "PATCH"]:
+            self.__add_route__(c, route, callback)
+
+
     # We need a dummy regex with no captures that takes a route with parameters
     # like '/books/:section/:number/' and converts it to a regex that accepts
     # any url path with those parameters filled in.
@@ -563,11 +570,11 @@ class Router():
                     parsingParam = False
                     paramNames.append(currentParamName)
                     
-                if c in invalid_val_chars:
-                    regex_str += f'\\{c}'
+                if c == '.':
+                    regex_str += f'\\.'
                     # If this character is a character that should be
                     # interpreted literally, escape it
-                    # ':hello+' becomes '[^-./]+\+'
+                    # ':hello.' becomes '[^-./]+\.'
                 else:
                     regexStr += c
             else: # Is a valid param name character
