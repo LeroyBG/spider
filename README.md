@@ -160,7 +160,7 @@ Contains a string representation of the path part of the request url. For
 example, a request sent to `"/course?id=a123123&date=2012"` will have
 `req.path` equal to `"/course"`.
 
-##### `req.protocol'
+##### `req.protocol`
 
 Contains the request protocol string: either `"http"` or `"https"`.
 *Note:* this property currently a constant with value `"http"`.
