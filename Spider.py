@@ -8,6 +8,7 @@ import socket
 from http.cookies import SimpleCookie
 from urllib import parse
 import re
+import asyncio
 
 type parseMethod = Literal["json", "urlencoded"] | None
 type HTTPMethod = Literal["GET", 
@@ -398,7 +399,7 @@ class Router():
     
     # TODO: Allow user to specify config options like parseMethod,
     # is_cookie_parsing, etc.
-    def __handle_incoming_request__(self, command: HTTPMethod, 
+    async def __async_req_handler__(self, command: HTTPMethod, 
                                     request_path: str, 
                                     handler: BaseHTTPRequestHandler):
         callback = self.__match_request_to_callback__(command, request_path)
@@ -417,11 +418,17 @@ class Router():
                           error_content_type=handler.error_content_type,
                           protocol_version=handler.protocol_version,
                           method=command)
-            # THE ISSUE IS THE LINE ABOVE ^
             callback_fn = callback[1]
-            callback_fn(req, res)
+            if asyncio.iscoroutinefunction(callback_fn):
+                await callback_fn(req, res)
+            else:
+                callback_fn(req, res)
             return
-
+    
+    # Just uses asyncio.run() on the previous function
+    def __handle_incoming_request__(self):
+        asyncio.run(self.__async_req_handler__)
+    
     def parse(self, parse_method: parseMethod) -> None:
         valid_parse_methods = ['urlencoded', 'json']
         if parse_method not in valid_parse_methods:

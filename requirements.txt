@@ -4,3 +4,4 @@ http
 socket
 urllib
 re
+asyncio
